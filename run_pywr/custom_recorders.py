@@ -621,7 +621,11 @@ class ReservoirResilienceRecorder(NumpyArrayAbstractStorageRecorder):
 
         rlts = rlts.T
 
-        rlts.columns = pd.MultiIndex.from_tuples(rlts.columns, names=sc_index.names)
+        #sometimes there is only one column because the model only has one scenario, so it is necessary to extract columns according to different conditions
+        if len(rlts.columns) > 1:
+            rlts.columns = pd.MultiIndex.from_tuples(rlts.columns, names=sc_index.names)
+        else:
+            rlts.columns = pd.Index(rlts.columns, name=sc_index.names[0])
 
         return rlts.T
     
