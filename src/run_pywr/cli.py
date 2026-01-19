@@ -80,12 +80,12 @@ def run(filename):
     base, ext = os.path.splitext(filename)
     output_directory = os.path.join(base, "outputs")
 
-    os.makedirs(os.path.join(output_directory), exist_ok=True)
+    os.makedirs(output_directory, exist_ok=True)
 
     TablesRecorder(model, 
                    os.path.join(output_directory, f"{base}_and_nodes_parameters.h5"), 
                    parameters=[p for p in model.parameters if p.name is not None], 
-                   nodes = [n.name for n in model.nodes if n.name is not None])
+                   nodes=[n.name for n in model.nodes if n.name is not None])
 
     CSVRecorder(model, os.path.join(output_directory, f"{base}_nodes.csv"))
 
@@ -99,133 +99,203 @@ def run(filename):
     agg_recorders = {}
 
     for rec in model.recorders:
-        
         try:
             recorders_[rec.name] = np.array(rec.values())
             agg_recorders[rec.name] = np.array(rec.aggregated_value())
-
         except NotImplementedError:
             pass
 
     recorders_ = pd.DataFrame(recorders_).T
     agg_recorders = pd.Series(agg_recorders, dtype=np.float64)
 
-    writer = pd.ExcelWriter(os.path.join(output_directory, f"{base}_metrics.xlsx"))
-    recorders_.to_excel(writer, 'values')
-    agg_recorders.to_excel(writer, 'agg_values')
-
-    if pd.__version__ >= '2.0.3':
-        writer._save()
-    else:
-        writer.close()
+    # Save metrics to Excel
+    metrics_path = os.path.join(output_directory, f"{base}_metrics.xlsx")
+    with pd.ExcelWriter(metrics_path, engine='openpyxl') as writer:
+        recorders_.to_excel(writer, 'values')
+        agg_recorders.to_excel(writer, 'agg_values')
+    
+    print(f"Metrics saved to Excel file: {metrics_path}")
 
     if any(s.size > 1 for s in model.scenarios.scenarios):
-        # Save DataFrame recorders
-        store = pd.HDFStore(os.path.join(output_directory, f"{base}_recorders.h5"), mode='w')
-
-        for rec in model.recorders:
-            if hasattr(rec, 'to_dataframe'):
-                df = rec.to_dataframe()
-                store[rec.name] = df
-
-            try:
-                values = np.array(rec.values())
-
-            except NotImplementedError:
-                pass
-            
-            else:
-                store[f"{rec.name}_values"] = pd.Series(values)
+        # Multiple scenarios: Save DataFrame recorders to HDF5
+        store_path = os.path.join(output_directory, f"{base}_recorders.h5")
         
-        store.close()
+        with pd.HDFStore(store_path, mode='w') as store:
+            for rec in model.recorders:
+                if hasattr(rec, 'to_dataframe'):
+                    try:
+                        df = rec.to_dataframe()
+                        store[rec.name] = df
+                    except Exception as e:
+                        logger.warning(f"Could not save recorder '{rec.name}' to HDF5: {e}")
+
+                try:
+                    values = np.array(rec.values())
+                    store[f"{rec.name}_values"] = pd.Series(values)
+                except NotImplementedError:
+                    pass
+                except Exception as e:
+                    logger.warning(f"Could not save values for recorder '{rec.name}': {e}")
+        
+        print(f"Recorders saved to HDF5 file: {store_path}")
 
     else:
+        # Single scenario: Save DataFrame recorders to Excel grouped by frequency
         nmes = []
         rec_to_csv = []
         
         for rec in model.recorders:
             if hasattr(rec, 'to_dataframe'):
-                df = rec.to_dataframe()
-                nmes.append(rec.name)
-                rec_to_csv.append(df) 
+                try:
+                    df = rec.to_dataframe()
+                    nmes.append(rec.name)
+                    rec_to_csv.append(df)
+                except Exception as e:
+                    logger.warning(f"Could not convert recorder '{rec.name}' to DataFrame: {e}")
+
+        if not rec_to_csv:
+            logger.info("No DataFrame recorders to save.")
+            return
 
         # Group DataFrames by their frequency
         from collections import defaultdict
         
         freq_groups = defaultdict(list)
-        freq_names = defaultdict(list)
         
         for i, df in enumerate(rec_to_csv):
+            # Determine frequency
             if hasattr(df.index, 'freq') and df.index.freq is not None:
-                freq = str(df.index.freq)  # Convert to string for consistent grouping
-                freq_groups[freq].append(df)
-                freq_names[freq].append(nmes[i])
+                freq = str(df.index.freq)
             else:
-                # Handle DataFrames without frequency (likely regular DatetimeIndex or other)
-                freq_key = 'no_frequency'
-                freq_groups[freq_key].append(df)
-                freq_names[freq_key].append(nmes[i])
+                freq = 'no_frequency'
+            
+            # Handle multi-column DataFrames by pre-renaming columns
+            if df.columns.size > 1:
+                df_copy = df.copy()
+                new_columns = []
+                
+                for col in df.columns:
+                    if isinstance(col, tuple):
+                        # MultiIndex: join all levels, removing empty/None values
+                        col_parts = [str(c) for c in col if c is not None and str(c).strip()]
+                        col_name = '_'.join(col_parts) if col_parts else 'unnamed'
+                    else:
+                        col_name = str(col)
+                    
+                    # Create full column name with recorder prefix
+                    new_columns.append(f"{nmes[i]}_{col_name}")
+                
+                df_copy.columns = new_columns
+                freq_groups[freq].append(df_copy)
+            else:
+                # Single column - rename for consistency
+                df_copy = df.copy()
+                df_copy.columns = [nmes[i]]
+                freq_groups[freq].append(df_copy)
         
         # Create Excel file with separate sheets for each frequency
         excel_path = os.path.join(output_directory, f"{base}_recorders.xlsx")
         
-        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-            for freq, dfs in freq_groups.items():
-                if dfs:
-                    # Concatenate DataFrames within the same frequency group
+        # Frequency display name mapping
+        freq_display_names = {
+            'D': 'Daily',
+            'A-DEC': 'Annual',
+            'A': 'Annual',
+            'M': 'Monthly',
+            'MS': 'Monthly',
+            'W': 'Weekly',
+            'H': 'Hourly',
+            'no_frequency': 'Other'
+        }
+        
+        try:
+            with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                sheets_created = 0
+                
+                for freq, dfs in freq_groups.items():
+                    if not dfs:
+                        continue
+                    
+                    # Generate display name for sheet
+                    sheet_name = freq.replace('/', '_').replace('\\', '_').replace('*', '_')
+                    sheet_name = sheet_name.replace('[', '').replace(']', '').replace(':', '_')
+                    sheet_name = sheet_name.replace('?', '').replace('<', '').replace('>', '')
+                    
+                    display_name = freq_display_names.get(freq, sheet_name)
+                    
+                    # Ensure sheet name is not longer than 31 characters (Excel limit)
+                    if len(display_name) > 31:
+                        display_name = display_name[:31]
+                    
+                    # Make sheet name unique if needed
+                    original_display_name = display_name
+                    counter = 1
+                    while display_name in writer.sheets:
+                        suffix = f"_{counter}"
+                        max_len = 31 - len(suffix)
+                        display_name = original_display_name[:max_len] + suffix
+                        counter += 1
+                    
                     try:
+                        # Concatenate DataFrames within the same frequency group
                         concatenated_df = pd.concat(dfs, axis=1)
-                        concatenated_df.columns = freq_names[freq]
                         
-                        # Clean sheet name (Excel has restrictions on sheet names)
-                        sheet_name = freq.replace('/', '_').replace('\\', '_').replace('*', '_')
-                        sheet_name = sheet_name.replace('[', '').replace(']', '').replace(':', '_')
-                        sheet_name = sheet_name.replace('?', '').replace('<', '').replace('>', '')
-                        
-                        # Ensure sheet name is not longer than 31 characters (Excel limit)
-                        if len(sheet_name) > 31:
-                            sheet_name = sheet_name[:31]
-                        
-                        # Handle special cases for common frequencies
-                        freq_display_names = {
-                            'D': 'Daily',
-                            'A-DEC': 'Annual',
-                            'M': 'Monthly', 
-                            'W': 'Weekly',
-                            'H': 'Hourly',
-                            'no_frequency': 'Other'
-                        }
-                        
-                        display_name = freq_display_names.get(freq, sheet_name)
-                        if len(display_name) > 31:
-                            display_name = display_name[:31]
+                        # Remove duplicate columns if any exist
+                        if concatenated_df.columns.duplicated().any():
+                            logger.warning(f"Duplicate columns found in frequency '{freq}', removing duplicates")
+                            concatenated_df = concatenated_df.loc[:, ~concatenated_df.columns.duplicated()]
                         
                         concatenated_df.to_excel(writer, sheet_name=display_name)
+                        sheets_created += 1
                         print(f"Saved {len(dfs)} recorder(s) with frequency '{freq}' to sheet '{display_name}'")
                         
                     except Exception as e:
-                        print(f"Warning: Could not concatenate recorders with frequency '{freq}': {e}")
+                        logger.warning(f"Could not concatenate recorders with frequency '{freq}': {e}")
+                        
                         # Save individually if concatenation fails
                         for j, df in enumerate(dfs):
-                            individual_sheet_name = f"{display_name}_{j+1}"[:31]
-                            df.to_excel(writer, sheet_name=individual_sheet_name)
-                            print(f"Saved individual recorder '{freq_names[freq][j]}' to sheet '{individual_sheet_name}'")
-        
-        print(f"Recorders saved to Excel file: {excel_path}")
-
-    # else:
-    #     nmes = []
-    #     rec_to_csv = []
-        
-    #     for rec in model.recorders:
-    #         if hasattr(rec, 'to_dataframe'):
-    #             df = rec.to_dataframe()
-    #             nmes.append(rec.name)
-    #             rec_to_csv.append(df) 
-
-    #     rec_to_csv = pd.concat(rec_to_csv, axis=1)
-    #     rec_to_csv.columns = nmes
-    #     rec_to_csv.to_csv(os.path.join(output_directory, f"{base}_recorders.csv"))
+                            try:
+                                individual_sheet_name = f"{display_name}_{j+1}"
+                                if len(individual_sheet_name) > 31:
+                                    individual_sheet_name = individual_sheet_name[:31]
+                                
+                                # Ensure uniqueness
+                                original_name = individual_sheet_name
+                                counter = 1
+                                while individual_sheet_name in writer.sheets:
+                                    suffix = f"_{counter}"
+                                    max_len = 31 - len(suffix)
+                                    individual_sheet_name = original_name[:max_len] + suffix
+                                    counter += 1
+                                
+                                df.to_excel(writer, sheet_name=individual_sheet_name)
+                                sheets_created += 1
+                                print(f"Saved individual recorder to sheet '{individual_sheet_name}'")
+                            except Exception as inner_e:
+                                logger.error(f"Could not save individual recorder {j} for frequency '{freq}': {inner_e}")
+                
+                if sheets_created == 0:
+                    # Excel requires at least one sheet - create a dummy one
+                    pd.DataFrame({'Info': ['No recorders to display']}).to_excel(
+                        writer, sheet_name='Info', index=False
+                    )
+                    logger.warning("No recorder sheets created - added placeholder sheet")
+            
+            print(f"Recorders saved to Excel file: {excel_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to create Excel file for recorders: {e}")
+            # Fall back to saving as CSV files
+            csv_dir = os.path.join(output_directory, f"{base}_recorders_csv")
+            os.makedirs(csv_dir, exist_ok=True)
+            
+            for freq, dfs in freq_groups.items():
+                for j, df in enumerate(dfs):
+                    csv_filename = f"{freq}_recorder_{j}.csv"
+                    csv_path = os.path.join(csv_dir, csv_filename)
+                    df.to_csv(csv_path)
+            
+            print(f"Recorders saved to CSV files in directory: {csv_dir}")
 
 
 @cli.command(name='run_simulation')
@@ -895,90 +965,414 @@ def pywr_mpi_borg(config_file, seed):
 
 @cli.command()
 @click.argument('filename', type=click.Path(file_okay=True, dir_okay=False, exists=True))
-@click.option('--use-mpi/--no-use-mpi', default=False)
-@click.option('-s', '--seed', type=int, default=None)
-@click.option('-p', '--num-cpus', type=int, default=None)
-@click.option('-n', '--max-nfe', type=int, default=1000)
-@click.option('--pop-size', type=int, default=50)
-@click.option('-a', '--algorithm', type=click.Choice(['NSGAII', 'NSGAIII', 'EpsMOEA', 'EpsNSGAII']), default='NSGAII')
-@click.option('-w', '--wrapper-type', type=click.Choice(['json', 'mongo', 'wpywr']), default='json')
-@click.option('-e', '--epsilons', multiple=True, type=float, default=(0.05, ))
-@click.option('--divisions-outer', type=int, default=12)
-@click.option('--divisions-inner', type=int, default=0)
-def search(filename, use_mpi, seed, num_cpus, max_nfe, pop_size, algorithm, wrapper_type, epsilons, divisions_outer, divisions_inner):
+@click.option('--use-mpi/--no-use-mpi', default=False, help='Use MPI for parallel evaluation')
+@click.option('-s', '--seed', type=int, default=None, help='Random seed for reproducibility')
+@click.option('-p', '--num-cpus', type=int, default=None, help='Number of CPUs for multiprocessing')
+@click.option('-n', '--max-nfe', type=int, default=1000, help='Maximum number of function evaluations')
+@click.option('--pop-size', type=int, default=50, help='Population size')
+@click.option('-a', '--algorithm', type=click.Choice(['NSGAII', 'NSGAIII', 'EpsMOEA', 'EpsNSGAII']), 
+              default='NSGAII', help='Optimization algorithm')
+@click.option('-w', '--wrapper-type', type=click.Choice(['json', 'wpywr']), 
+              default='json', help='Wrapper type for problem definition')
+@click.option('-e', '--epsilons', multiple=True, type=float, default=(0.05,), 
+              help='Epsilon values for epsilon-based algorithms')
+@click.option('--divisions-outer', type=int, default=12, help='Outer divisions for NSGA-III')
+@click.option('--divisions-inner', type=int, default=0, help='Inner divisions for NSGA-III')
+def search(
+    filename: str,
+    use_mpi: bool,
+    seed: int | None,
+    num_cpus: int | None,
+    max_nfe: int,
+    pop_size: int,
+    algorithm: str,
+    wrapper_type: str,
+    epsilons: tuple[float, ...],
+    divisions_outer: int,
+    divisions_inner: int,
+) -> None:
+    """
+    Run multi-objective optimization on a Pywr model.
+    
+    Args:
+        filename: Path to the model JSON file
+        use_mpi: Whether to use MPI for distributed computing
+        seed: Random seed (auto-generated if None)
+        num_cpus: Number of CPUs for multiprocessing (None = serial)
+        max_nfe: Maximum number of function evaluations
+        pop_size: Population size for genetic algorithms
+        algorithm: Optimization algorithm to use
+        wrapper_type: Type of problem wrapper
+        epsilons: Epsilon values for epsilon-based algorithms
+        divisions_outer: Outer divisions for NSGA-III
+        divisions_inner: Inner divisions for NSGA-III
+    """
     import platypus
-    from run_moea.BsonPlatypusWrapper import LoggingArchive , PyretoJSONPlatypusWrapper, SaveNondominatedSolutionsArchive
+    from run_moea.BsonPlatypusWrapper import (
+        PyretoJSONPlatypusWrapper,
+        SaveNondominatedSolutionsArchive,
+    )
 
-    logger.info('Loading model from file: "{}"'.format(filename))
-    directory, model_name = os.path.split(filename)
-    output_directory = os.path.join(directory, 'outputs', f'{model_name[0:-5]}_{seed}')
-
-    if algorithm == 'NSGAII':
-        algorithm_klass = platypus.NSGAII
-        algorithm_kwargs = {'population_size': pop_size}
-    elif algorithm == 'NSGAIII':
-        algorithm_klass = platypus.NSGAIII
-        algorithm_kwargs = {'divisions_outer': divisions_outer, 'divisions_inner': divisions_inner}
-    elif algorithm == 'EpsMOEA':
-        algorithm_klass = platypus.EpsMOEA
-        algorithm_kwargs = {'population_size': pop_size, 'epsilons': epsilons}
-    elif algorithm == 'EpsNSGAII':
-        algorithm_klass = platypus.EpsMOEA
-        algorithm_kwargs = {'population_size': pop_size, 'epsilons': epsilons}
-    else:
-        raise RuntimeError('Algorithm "{}" not supported.'.format(algorithm))
-
+    # Generate seed if not provided
     if seed is None:
         seed = random.randrange(sys.maxsize)
-
-    search_data = {'algorithm': algorithm, 'seed': seed, 'user_metadata':algorithm_kwargs}
-    if wrapper_type == 'json':
-        wrapper = PyretoJSONPlatypusWrapper(filename, search_data=search_data, output_directory=output_directory)
-    elif wrapper_type == 'wpywr':
-        wrapper = SaveNondominatedSolutionsArchive(filename, search_data=search_data, output_directory=output_directory,
-                                                   model_name=model_name)
-    else:
-        raise ValueError(f'Wrapper type "{wrapper_type}" not supported.')
-
-    if seed is not None:
-        random.seed(seed)
-
-    logger.info('Starting model search.')
-
-    # Use only to multi-node
+    
+    # Set random seed for reproducibility
+    random.seed(seed)
+    
+    # Parse file path
+    directory, model_name = os.path.split(filename)
+    model_basename = os.path.splitext(model_name)[0]
+    output_directory = os.path.join(directory, 'outputs', f'{model_basename}_{seed}')
+    
+    logger.info(f'Loading model from file: "{filename}"')
+    logger.info(f'Using seed: {seed}')
+    logger.info(f'Output directory: {output_directory}')
+    
+    # Configure algorithm
+    algorithm_config = _get_algorithm_config(
+        algorithm, pop_size, epsilons, divisions_outer, divisions_inner
+    )
+    algorithm_klass = algorithm_config['class']
+    algorithm_kwargs = algorithm_config['kwargs']
+    
+    # Create wrapper
+    search_data = {
+        'algorithm': algorithm,
+        'seed': seed,
+        'user_metadata': algorithm_kwargs,
+    }
+    
+    wrapper = _create_wrapper(
+        wrapper_type, filename, search_data, output_directory, model_name
+    )
+    
+    # Handle MPI workers (must exit before main optimization)
     if use_mpi:
-
         from platypus.mpipool import MPIPool
-
+        
         pool = MPIPool()
-        evaluator_klass = platypus.PoolEvaluator
-        evaluator_args = (pool,)
-
+        
         if not pool.is_master():
+            logger.info(f'Worker process {pool.rank} entering wait state')
             pool.wait()
+            logger.info(f'Worker process {pool.rank} exiting')
             sys.exit(0)
+        
+        logger.info(f'Master process starting with {pool.size - 1} worker(s)')
+    
+    # Run optimization
+    logger.info('Starting model search')
+    
+    try:
+        if use_mpi:
+            _run_mpi_optimization(
+                algorithm_klass, wrapper, algorithm_kwargs, seed, max_nfe, 
+                wrapper_type, pool
+            )
+        else:
+            _run_local_optimization(
+                algorithm_klass, wrapper, algorithm_kwargs, seed, max_nfe,
+                wrapper_type, num_cpus
+            )
+    finally:
+        if use_mpi:
+            pool.close()
+            logger.info('MPI pool closed')
+    
+    logger.info('Optimization complete')
 
-    elif num_cpus is None:
-        evaluator_klass = platypus.MapEvaluator
-        evaluator_args = ()
 
+def _get_algorithm_config(
+    algorithm: str,
+    pop_size: int,
+    epsilons: tuple[float, ...],
+    divisions_outer: int,
+    divisions_inner: int,
+) -> dict:
+    """
+    Get algorithm class and configuration parameters.
+    
+    Args:
+        algorithm: Algorithm name
+        pop_size: Population size
+        epsilons: Epsilon values
+        divisions_outer: Outer divisions for NSGA-III
+        divisions_inner: Inner divisions for NSGA-III
+        
+    Returns:
+        Dictionary with 'class' and 'kwargs' keys
+        
+    Raises:
+        ValueError: If algorithm is not supported
+    """
+    import platypus
+    
+    configs = {
+        'NSGAII': {
+            'class': platypus.NSGAII,
+            'kwargs': {'population_size': pop_size},
+        },
+        'NSGAIII': {
+            'class': platypus.NSGAIII,
+            'kwargs': {
+                'divisions_outer': divisions_outer,
+                'divisions_inner': divisions_inner,
+            },
+        },
+        'EpsMOEA': {
+            'class': platypus.EpsMOEA,
+            'kwargs': {
+                'population_size': pop_size,
+                'epsilons': epsilons,
+            },
+        },
+        'EpsNSGAII': {
+            'class': platypus.EpsNSGAII,
+            'kwargs': {
+                'population_size': pop_size,
+                'epsilons': epsilons,
+            },
+        },
+    }
+    
+    if algorithm not in configs:
+        raise ValueError(
+            f'Algorithm "{algorithm}" not supported. '
+            f'Available: {", ".join(configs.keys())}'
+        )
+    
+    return configs[algorithm]
+
+
+def _create_wrapper(
+    wrapper_type: str,
+    filename: str,
+    search_data: dict,
+    output_directory: str,
+    model_name: str,
+):
+    """
+    Create the appropriate problem wrapper.
+    
+    Args:
+        wrapper_type: Type of wrapper ('json' or 'wpywr')
+        filename: Path to model file
+        search_data: Metadata for the search
+        output_directory: Directory for outputs
+        model_name: Name of the model
+        
+    Returns:
+        Configured wrapper instance
+        
+    Raises:
+        ValueError: If wrapper_type is not supported
+    """
+    from run_moea.BsonPlatypusWrapper import (
+        PyretoJSONPlatypusWrapper,
+        SaveNondominatedSolutionsArchive,
+    )
+    
+    if wrapper_type == 'json':
+        return PyretoJSONPlatypusWrapper(
+            filename,
+            search_data=search_data,
+            output_directory=output_directory,
+        )
+    elif wrapper_type == 'wpywr':
+        return SaveNondominatedSolutionsArchive(
+            filename,
+            search_data=search_data,
+            output_directory=output_directory,
+            model_name=model_name,
+        )
     else:
-        evaluator_klass = platypus.ProcessPoolEvaluator
-        evaluator_args = (num_cpus,)
+        raise ValueError(
+            f'Wrapper type "{wrapper_type}" not supported. '
+            f'Available: json, wpywr'
+        )
 
-    with evaluator_klass(*evaluator_args) as evaluator:
-        algorithm = algorithm_klass(wrapper.problem, evaluator=evaluator, **algorithm_kwargs, seed=seed)
 
+def _run_mpi_optimization(
+    algorithm_klass,
+    wrapper,
+    algorithm_kwargs: dict,
+    seed: int,
+    max_nfe: int,
+    wrapper_type: str,
+    pool,
+) -> None:
+    """
+    Run optimization using MPI parallelization.
+    
+    Args:
+        algorithm_klass: Algorithm class to instantiate
+        wrapper: Problem wrapper
+        algorithm_kwargs: Algorithm configuration
+        seed: Random seed
+        max_nfe: Maximum function evaluations
+        wrapper_type: Type of wrapper
+        pool: MPI pool instance
+    """
+    import platypus
+    
+    with platypus.PoolEvaluator(pool) as evaluator:
+        algorithm = algorithm_klass(
+            wrapper.problem,
+            evaluator=evaluator,
+            **algorithm_kwargs,
+            seed=seed,
+        )
+        
         if wrapper_type == 'wpywr':
             algorithm.run(max_nfe, callback=wrapper.save_nondominant)
         else:
             algorithm.run(max_nfe)
-
-    # Use only to multi-node
-    if use_mpi:
-        pool.close()
+        
+        logger.info(f'Completed {algorithm.nfe} function evaluations')
 
 
+def _run_local_optimization(
+    algorithm_klass,
+    wrapper,
+    algorithm_kwargs: dict,
+    seed: int,
+    max_nfe: int,
+    wrapper_type: str,
+    num_cpus: int | None,
+) -> None:
+    """
+    Run optimization using local parallelization or serial execution.
+    
+    Args:
+        algorithm_klass: Algorithm class to instantiate
+        wrapper: Problem wrapper
+        algorithm_kwargs: Algorithm configuration
+        seed: Random seed
+        max_nfe: Maximum function evaluations
+        wrapper_type: Type of wrapper
+        num_cpus: Number of CPUs (None for serial)
+    """
+    import platypus
+    
+    # Select evaluator
+    if num_cpus is None:
+        evaluator_klass = platypus.MapEvaluator
+        evaluator_args = ()
+        logger.info('Using serial evaluation')
+    else:
+        evaluator_klass = platypus.ProcessPoolEvaluator
+        evaluator_args = (num_cpus,)
+        logger.info(f'Using multiprocessing with {num_cpus} CPUs')
+    
+    with evaluator_klass(*evaluator_args) as evaluator:
+        algorithm = algorithm_klass(
+            wrapper.problem,
+            evaluator=evaluator,
+            **algorithm_kwargs,
+            seed=seed,
+        )
+        
+        if wrapper_type == 'wpywr':
+            algorithm.run(max_nfe, callback=wrapper.save_nondominant)
+        else:
+            algorithm.run(max_nfe)
+        
+        logger.info(f'Completed {algorithm.nfe} function evaluations')
+        
+
+###
+# This is my old method that does not work in my personal computer using mpi, but in the UoM clusters works perfect!
+###
+# @cli.command()
+# @click.argument('filename', type=click.Path(file_okay=True, dir_okay=False, exists=True))
+# @click.option('--use-mpi/--no-use-mpi', default=False)
+# @click.option('-s', '--seed', type=int, default=None)
+# @click.option('-p', '--num-cpus', type=int, default=None)
+# @click.option('-n', '--max-nfe', type=int, default=1000)
+# @click.option('--pop-size', type=int, default=50)
+# @click.option('-a', '--algorithm', type=click.Choice(['NSGAII', 'NSGAIII', 'EpsMOEA', 'EpsNSGAII']), default='NSGAII')
+# @click.option('-w', '--wrapper-type', type=click.Choice(['json', 'mongo', 'wpywr']), default='json')
+# @click.option('-e', '--epsilons', multiple=True, type=float, default=(0.05, ))
+# @click.option('--divisions-outer', type=int, default=12)
+# @click.option('--divisions-inner', type=int, default=0)
+# def search(filename, use_mpi, seed, num_cpus, max_nfe, pop_size, algorithm, wrapper_type, epsilons, divisions_outer, divisions_inner):
+#     import platypus
+#     from run_moea.BsonPlatypusWrapper import LoggingArchive , PyretoJSONPlatypusWrapper, SaveNondominatedSolutionsArchive
+
+#     logger.info('Loading model from file: "{}"'.format(filename))
+#     directory, model_name = os.path.split(filename)
+#     output_directory = os.path.join(directory, 'outputs', f'{model_name[0:-5]}_{seed}')
+
+#     if algorithm == 'NSGAII':
+#         algorithm_klass = platypus.NSGAII
+#         algorithm_kwargs = {'population_size': pop_size}
+#     elif algorithm == 'NSGAIII':
+#         algorithm_klass = platypus.NSGAIII
+#         algorithm_kwargs = {'divisions_outer': divisions_outer, 'divisions_inner': divisions_inner}
+#     elif algorithm == 'EpsMOEA':
+#         algorithm_klass = platypus.EpsMOEA
+#         algorithm_kwargs = {'population_size': pop_size, 'epsilons': epsilons}
+#     elif algorithm == 'EpsNSGAII':
+#         algorithm_klass = platypus.EpsMOEA
+#         algorithm_kwargs = {'population_size': pop_size, 'epsilons': epsilons}
+#     else:
+#         raise RuntimeError('Algorithm "{}" not supported.'.format(algorithm))
+
+#     if seed is None:
+#         seed = random.randrange(sys.maxsize)
+
+#     search_data = {'algorithm': algorithm, 'seed': seed, 'user_metadata':algorithm_kwargs}
+#     if wrapper_type == 'json':
+#         wrapper = PyretoJSONPlatypusWrapper(filename, search_data=search_data, output_directory=output_directory)
+#     elif wrapper_type == 'wpywr':
+#         wrapper = SaveNondominatedSolutionsArchive(filename, search_data=search_data, output_directory=output_directory,
+#                                                    model_name=model_name)
+#     else:
+#         raise ValueError(f'Wrapper type "{wrapper_type}" not supported.')
+
+#     if seed is not None:
+#         random.seed(seed)
+
+#     logger.info('Starting model search.')
+
+#     # Use only to multi-node
+#     if use_mpi:
+
+#         from platypus.mpipool import MPIPool
+
+#         pool = MPIPool()
+#         evaluator_klass = platypus.PoolEvaluator
+#         evaluator_args = (pool,)
+
+#         if not pool.is_master():
+#             pool.wait()
+#             sys.exit(0)
+
+#     elif num_cpus is None:
+#         evaluator_klass = platypus.MapEvaluator
+#         evaluator_args = ()
+
+#     else:
+#         evaluator_klass = platypus.ProcessPoolEvaluator
+#         evaluator_args = (num_cpus,)
+
+#     with evaluator_klass(*evaluator_args) as evaluator:
+#         algorithm = algorithm_klass(wrapper.problem, evaluator=evaluator, **algorithm_kwargs, seed=seed)
+
+#         if wrapper_type == 'wpywr':
+#             algorithm.run(max_nfe, callback=wrapper.save_nondominant)
+#         else:
+#             algorithm.run(max_nfe)
+
+#     # Use only to multi-node
+#     if use_mpi:
+#         pool.close()
+
+
+##
+# To remove from here
+##
 
 # @cli_algorithm_search.command("platypus")
 # @click.pass_context
