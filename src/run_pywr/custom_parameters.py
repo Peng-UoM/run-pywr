@@ -207,15 +207,15 @@ class TransientDecisionParameter(Parameter):
         Earliest date that the variable can be set to. Defaults to `model.timestepper.start`
     latest_date : string or pandas.Timestamp or None
         Latest date that the variable can be set to. Defaults to `model.timestepper.end`
-    decision_freq : pandas frequency string (default 'AS')
-        The resolution of feasible dates. For example 'AS' would create feasible dates every
+    decision_freq : pandas frequency string (default 'YS')
+        The resolution of feasible dates. For example 'YS' would create feasible dates every
         year between `earliest_date` and `latest_date`. The `pandas` functions are used
         internally for delta date calculations.
 
     """
 
     def __init__(self, model, decision_date, before_parameter, after_parameter,
-                 earliest_date=None, latest_date=None, decision_freq='AS', **kwargs):
+                 earliest_date=None, latest_date=None, decision_freq='YS', **kwargs):
         super(TransientDecisionParameter, self).__init__(model, **kwargs)
         self._decision_date = None
         self.decision_date = decision_date
@@ -237,9 +237,15 @@ class TransientDecisionParameter(Parameter):
         self._latest_date = None
         self.latest_date = latest_date
 
-        self.decision_freq = decision_freq
+        self.decision_freq = self._normalise_decision_freq(decision_freq)
         self._feasible_dates = None
         self.integer_size = 1  # This parameter has a single integer variable
+
+    @staticmethod
+    def _normalise_decision_freq(freq):
+        if isinstance(freq, str) and (freq == 'AS' or freq.startswith('AS-')):
+            return 'YS' + freq[2:]
+        return freq
 
     def decision_date():
         def fget(self):
@@ -943,3 +949,385 @@ class Demand_informed_release_Maguga(Parameter):
         return cls(model, demand_nodes, DS_Komati_Lomati, Maguga, Driekoppies, Buffer_volume_Driekoppies, Buffer_volume_Maguga, Demand_storage_Maguga, Demand_storage_Driekoppies, Maguga_hydropower_release_m3_s, Maguga_hydropower_operation_hours_per_week, **data)
 
 Demand_informed_release_Maguga.register()
+
+class SeasonalStorageTargetParameter(Parameter):
+    """
+    Annual, state-dependent storage target for a reservoir.
+
+    Purpose
+    -------
+    This parameter computes one target storage value per water year and scenario.
+    The target is recalculated on or after a decision date (e.g. 1 April) and then
+    held constant until the next water year.
+
+    The target is designed for future-operation optimisation where no observed
+    storage target exists. It balances:
+      - irrigation pressure / irrigation value  -> lowers target (release more)
+      - winter energy pressure / value          -> raises target (store more)
+      - drought / low availability              -> raises target (hedging)
+
+    Notes
+    -----
+    - This class uses *previously realised* inflow (from completed timesteps only)
+      plus optional expected remaining inflow / losses parameters.
+    - Default units assume storage in Mm3 and flow in Mm3/day if flow_is_per_day=True.
+    - If you want a more explicit annual economic signal, pass:
+        irrigation_value_parameter
+        winter_energy_value_parameter
+      Otherwise demand and current storage are used as proxies.
+
+    Suggested Toktogul-like defaults (Mm3):
+      lower_target = 10500   # cooperative-ish end-of-vegetation target
+      upper_target = 13000   # more conservative / energy-security target
+      min_volume   =  6500   # safe operating floor
+    """
+
+    def __init__(
+        self,
+        model,
+        storage_node,
+        inflow_nodes=None,
+        demand_nodes=None,
+        expected_remaining_inflow_parameter=None,
+        expected_remaining_losses_parameter=None,
+        irrigation_value_parameter=None,
+        winter_energy_value_parameter=None,
+        decision_month=4,
+        decision_day=1,
+        water_year_start_month=10,
+        water_year_start_day=1,
+        lower_target=10500.0,
+        upper_target=13000.0,
+        min_volume=6500.0,
+        max_volume=None,
+        energy_weight=1.0,
+        irrigation_weight=1.0,
+        drought_weight=1.0,
+        irrigation_norm=1.0,
+        energy_norm=1.0,
+        availability_norm=None,
+        stickiness=0.0,
+        flow_is_per_day=True,
+        **kwargs,
+    ):
+        super().__init__(model, **kwargs)
+
+        self.storage_node = storage_node
+        self.inflow_nodes = inflow_nodes if inflow_nodes is not None else []
+        self.demand_nodes = demand_nodes if demand_nodes is not None else []
+
+        self.expected_remaining_inflow_parameter = expected_remaining_inflow_parameter
+        self.expected_remaining_losses_parameter = expected_remaining_losses_parameter
+        self.irrigation_value_parameter = irrigation_value_parameter
+        self.winter_energy_value_parameter = winter_energy_value_parameter
+
+        self.decision_month = int(decision_month)
+        self.decision_day = int(decision_day)
+        self.water_year_start_month = int(water_year_start_month)
+        self.water_year_start_day = int(water_year_start_day)
+
+        self.lower_target = float(lower_target)
+        self.upper_target = float(upper_target)
+        self.min_volume = float(min_volume)
+        self.max_volume = None if max_volume is None else float(max_volume)
+
+        self.energy_weight = float(energy_weight)
+        self.irrigation_weight = float(irrigation_weight)
+        self.drought_weight = float(drought_weight)
+
+        self.irrigation_norm = float(irrigation_norm)
+        self.energy_norm = float(energy_norm)
+        self.availability_norm = availability_norm
+
+        self.stickiness = float(stickiness)
+        self.flow_is_per_day = bool(flow_is_per_day)
+
+        # Register dependencies
+        for p in [
+            self.expected_remaining_inflow_parameter,
+            self.expected_remaining_losses_parameter,
+            self.irrigation_value_parameter,
+            self.winter_energy_value_parameter,
+        ]:
+            if isinstance(p, Parameter):
+                self.children.add(p)
+
+        # Internal state
+        self._current_target = None
+        self._target_water_year = None
+        self._observed_inflow_ytd = None
+        self._last_seen_timestep_index = None
+
+    def setup(self):
+        super().setup()
+        ncomb = len(self.model.scenarios.combinations)
+
+        self._current_target = np.full(ncomb, self.lower_target, dtype=np.float64)
+        self._target_water_year = np.full(ncomb, -9999, dtype=np.int32)
+        self._observed_inflow_ytd = np.zeros(ncomb, dtype=np.float64)
+        self._last_seen_timestep_index = None
+
+    def reset(self):
+        super().reset()
+        self._current_target[:] = self.lower_target
+        self._target_water_year[:] = -9999
+        self._observed_inflow_ytd[:] = 0.0
+        self._last_seen_timestep_index = None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _to_timestamp(self, value):
+        if isinstance(value, pd.Timestamp):
+            return value
+        if hasattr(value, "to_timestamp"):
+            return value.to_timestamp()
+        return pd.Timestamp(value)
+
+    def _water_year(self, dt):
+        dt = self._to_timestamp(dt)
+        wy_start = pd.Timestamp(year=dt.year, month=self.water_year_start_month, day=self.water_year_start_day)
+        if dt >= wy_start:
+            return dt.year + 1
+        return dt.year
+
+    def _decision_datetime_for_water_year(self, water_year):
+        # If decision month is in/after the water-year start month, it belongs to calendar year water_year-1
+        if self.decision_month >= self.water_year_start_month:
+            year = water_year - 1
+        else:
+            year = water_year
+        return pd.Timestamp(year=year, month=self.decision_month, day=self.decision_day)
+
+    def _get_parameter_value(self, obj, scenario_index, default=0.0):
+        if obj is None:
+            return float(default)
+        if isinstance(obj, Parameter):
+            return float(obj.get_value(scenario_index))
+        return float(obj)
+
+    def _timestep_days_between_indices(self, prev_idx, curr_idx):
+        dt_index = self.model.timestepper.datetime_index
+        prev_dt = self._to_timestamp(dt_index[prev_idx])
+        curr_dt = self._to_timestamp(dt_index[curr_idx])
+
+        days = (curr_dt - prev_dt).days
+        if days > 0:
+            return float(days)
+
+        # Fallbacks
+        delta = getattr(self.model.timestepper, "delta", None)
+        if delta is not None:
+            try:
+                return float(delta)
+            except Exception:
+                pass
+
+        return 1.0
+
+    def _advance_observed_inflow_ytd(self, ts):
+        """
+        Advance internal cumulative observed inflow using completed timesteps only.
+
+        At timestep t, this method adds inflow from timestep t-1 (if available).
+        This avoids direct dependence on the current timestep's not-yet-realised flow.
+        """
+        idx = int(ts.index)
+
+        if self._last_seen_timestep_index is None:
+            self._last_seen_timestep_index = idx
+            return
+
+        if idx == self._last_seen_timestep_index:
+            return
+
+        prev_idx = self._last_seen_timestep_index
+        dt_index = self.model.timestepper.datetime_index
+
+        prev_dt = self._to_timestamp(dt_index[prev_idx])
+        curr_dt = self._to_timestamp(dt_index[idx])
+
+        prev_wy = self._water_year(prev_dt)
+        curr_wy = self._water_year(curr_dt)
+
+        # Reset YTD accumulator at the start of a new water year
+        if curr_wy != prev_wy:
+            self._observed_inflow_ytd[:] = 0.0
+        else:
+            dt_days = self._timestep_days_between_indices(prev_idx, idx)
+
+            for scenario_index in self.model.scenarios.combinations:
+                gid = scenario_index.global_id
+                inflow = 0.0
+                for node in self.inflow_nodes:
+                    inflow += node.flow[gid]
+
+                if self.flow_is_per_day:
+                    inflow *= dt_days
+
+                self._observed_inflow_ytd[gid] += inflow
+
+        self._last_seen_timestep_index = idx
+
+    def _compute_irrigation_signal(self, scenario_index):
+        """
+        Irrigation pressure / value signal.
+
+        If irrigation_value_parameter is supplied, use it directly.
+        Otherwise use the sum of current max_flow across demand nodes as a proxy.
+        """
+        if self.irrigation_value_parameter is not None:
+            return max(self._get_parameter_value(self.irrigation_value_parameter, scenario_index, 0.0), 0.0)
+
+        if not self.demand_nodes:
+            return 0.0
+
+        demand = 0.0
+        for node in self.demand_nodes:
+            demand += node.get_max_flow(scenario_index)
+        return max(float(demand), 0.0)
+
+    def _compute_winter_energy_signal(self, scenario_index):
+        """
+        Winter energy pressure / value signal.
+
+        This should ideally be a projected winter energy value, deficit,
+        or revenue proxy passed as a Parameter.
+        """
+        return max(self._get_parameter_value(self.winter_energy_value_parameter, scenario_index, 0.0), 0.0)
+
+    def _compute_target(self, ts, scenario_index):
+        gid = scenario_index.global_id
+
+        storage = float(self.storage_node.volume[gid])
+
+        if self.max_volume is None:
+            try:
+                max_volume = float(self.storage_node.get_max_volume(scenario_index))
+            except Exception:
+                max_volume = np.inf
+        else:
+            max_volume = self.max_volume
+
+        expected_remaining_inflow = self._get_parameter_value(
+            self.expected_remaining_inflow_parameter, scenario_index, 0.0
+        )
+        expected_remaining_losses = self._get_parameter_value(
+            self.expected_remaining_losses_parameter, scenario_index, 0.0
+        )
+
+        # Forecast available water remaining in the water year.
+        available = storage + self._observed_inflow_ytd[gid] + expected_remaining_inflow - expected_remaining_losses
+        available = max(available, self.min_volume)
+
+        irrigation_signal = self._compute_irrigation_signal(scenario_index)
+        winter_energy_signal = self._compute_winter_energy_signal(scenario_index)
+
+        # Normalised pressures
+        ag_score = self.irrigation_weight * (irrigation_signal / max(self.irrigation_norm, 1e-12))
+        energy_score = self.energy_weight * (winter_energy_signal / max(self.energy_norm, 1e-12))
+
+        availability_norm = max_volume if self.availability_norm is None else float(self.availability_norm)
+        drought_ratio = 1.0 - np.clip(
+            (available - self.min_volume) / max(availability_norm - self.min_volume, 1e-12),
+            0.0,
+            1.0,
+        )
+        drought_score = self.drought_weight * drought_ratio
+
+        # alpha -> 0 means irrigation-oriented; alpha -> 1 means energy/drought-oriented
+        denom = ag_score + energy_score + drought_score
+        if denom <= 0.0:
+            alpha = 0.5
+        else:
+            alpha = (energy_score + drought_score) / denom
+
+        target = self.lower_target + alpha * (self.upper_target - self.lower_target)
+
+        # Optional inter-annual smoothing
+        if self.stickiness > 0.0 and self._target_water_year[gid] >= 0:
+            target = self.stickiness * self._current_target[gid] + (1.0 - self.stickiness) * target
+
+        # Physical bounds
+        target = max(target, self.min_volume)
+        target = min(target, max_volume)
+        target = min(target, available)
+
+        return float(target)
+
+    def value(self, timestep, scenario_index):
+        ts = self.model.timestepper.current if timestep is None else timestep
+
+        # Update realised inflow from completed timesteps only
+        self._advance_observed_inflow_ytd(ts)
+
+        gid = scenario_index.global_id
+        dt_index = self.model.timestepper.datetime_index
+        dt = self._to_timestamp(dt_index[int(ts.index)])
+
+        wy = self._water_year(dt)
+        decision_dt = self._decision_datetime_for_water_year(wy)
+
+        # Compute once per water year, on/after the decision date
+        if self._target_water_year[gid] != wy and dt >= decision_dt:
+            self._current_target[gid] = self._compute_target(ts, scenario_index)
+            self._target_water_year[gid] = wy
+
+        # Before the decision date, return current storage as a neutral target
+        if self._target_water_year[gid] != wy:
+            return float(self.storage_node.volume[gid])
+
+        return float(self._current_target[gid])
+
+    @classmethod
+    def load(cls, model, data):
+        storage_node = model._get_node_from_ref(model, data.pop("storage_node"))
+
+        inflow_nodes = [
+            model._get_node_from_ref(model, n)
+            for n in data.pop("inflow_nodes", [])
+        ]
+
+        demand_nodes = [
+            model._get_node_from_ref(model, n)
+            for n in data.pop("demand_nodes", [])
+        ]
+
+        def load_float_or_param(key, default=None):
+            if key not in data:
+                return default
+            value = data.pop(key)
+            if isinstance(value, (int, float)):
+                return float(value)
+            return load_parameter(model, value)
+
+        return cls(
+            model,
+            storage_node=storage_node,
+            inflow_nodes=inflow_nodes,
+            demand_nodes=demand_nodes,
+            expected_remaining_inflow_parameter=load_float_or_param("expected_remaining_inflow_parameter", None),
+            expected_remaining_losses_parameter=load_float_or_param("expected_remaining_losses_parameter", None),
+            irrigation_value_parameter=load_float_or_param("irrigation_value_parameter", None),
+            winter_energy_value_parameter=load_float_or_param("winter_energy_value_parameter", None),
+            decision_month=data.pop("decision_month", 4),
+            decision_day=data.pop("decision_day", 1),
+            water_year_start_month=data.pop("water_year_start_month", 10),
+            water_year_start_day=data.pop("water_year_start_day", 1),
+            lower_target=data.pop("lower_target", 10500.0),
+            upper_target=data.pop("upper_target", 12500.0),
+            min_volume=data.pop("min_volume", 6000.0),
+            max_volume=data.pop("max_volume", None),
+            energy_weight=data.pop("energy_weight", 1.0),
+            irrigation_weight=data.pop("irrigation_weight", 1.0),
+            drought_weight=data.pop("drought_weight", 1.0),
+            irrigation_norm=data.pop("irrigation_norm", 1.0),
+            energy_norm=data.pop("energy_norm", 1.0),
+            availability_norm=data.pop("availability_norm", None),
+            stickiness=data.pop("stickiness", 0.0),
+            flow_is_per_day=data.pop("flow_is_per_day", True),
+            **data,
+        )
+
+
+SeasonalStorageTargetParameter.register()

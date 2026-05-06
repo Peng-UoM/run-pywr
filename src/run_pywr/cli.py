@@ -304,7 +304,7 @@ def run_simulation(filename):
     """
     This method is used to run a pywr model and saving all the extra recorders/metrics we normally use in projects we have with The World Bank.
     """
-
+ 
     ''' -------- TEMPORAL FUNCTION -NEED TO FIX IT USING FILLFORWARD METHOD ON THE RECORDERS ----'''
     def convert_freq_to_days(freq):
         """
@@ -324,10 +324,10 @@ def run_simulation(filename):
         else:
             return freq
     ''' -------- ------------------------------------------------------------- ----'''
-
+ 
     logger.info('Loading model from file: "{}"'.format(filename))
     model = Model.load(filename, solver='glpk')
-
+ 
     # Silence Warnings
     warnings.filterwarnings('ignore', category=tables.NaturalNameWarning)
     warnings.filterwarnings("ignore", category=FutureWarning, message=".*Resampling with a PeriodIndex is deprecated.*")
@@ -335,40 +335,40 @@ def run_simulation(filename):
     warnings.filterwarnings("ignore", category=FutureWarning, message=".*DataFrame.groupby with axis=1 is deprecated.*")
     
     ProgressRecorder(model)
-
+ 
     base, ext = os.path.splitext(filename)
     output_directory = os.path.join(base, "outputs")
-
+ 
     os.makedirs(os.path.join(output_directory), exist_ok=True)
-
+ 
     # Save DataFrame recorders
     store_metrics = pd.HDFStore(os.path.join(output_directory, f"{base}_metrics.h5"), mode='w')
     store_recorders = pd.HDFStore(os.path.join(output_directory, f"{base}_recorders.h5"), mode='w')
     store_aggreated = pd.HDFStore(os.path.join(output_directory, f"{base}_aggregated.h5"), mode='w')
-
+ 
     logger.info('Starting model run.')
     ret = model.run()
     logger.info(ret)
     print(ret.to_dataframe())
-
+ 
     for rec in model.recorders:
             
         if hasattr(rec, 'to_dataframe') and 'recorder' in rec.name:
             df = rec.to_dataframe()
-
+ 
             if model.timestepper.freq != df.index.freq:
                 store_recorders[rec.name] = df
-
+ 
             else:
                 if 'Hydropower Energy [MWh]' in rec.name:
                     store_recorders[rec.name] = df.resample('M').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
                 else:
                     store_recorders[rec.name] = df.resample('M').mean().loc[:str(model.timestepper.end.year),:]
-
+ 
         try:
             if 'Aggregated' in rec.name:
                 values = np.array(rec.values())
-
+ 
         except NotImplementedError:
             pass
         
@@ -378,16 +378,17 @@ def run_simulation(filename):
     
     store_recorders.close()
     store_aggreated.close()
-
+ 
     for rec in model.recorders:
-
+ 
         try:
-            if ('Reliability' in rec.name or 'Resilience' in rec.name 
-                or 'Annual Deficit' in rec.name or 'annual crop yield' in rec.name or 'supply reliability' in rec.name):
+            if ('Reliability' in rec.name or 'Resilience' in rec.name
+                or 'Annual Deficit' in rec.name or 'annual crop yield' in rec.name or 'supply reliability' in rec.name
+                or 'cost recorder' in rec.name):
                 sc_index = model.scenarios.multiindex
                 values = pd.DataFrame(np.array(rec.values()), index=sc_index)
                 #values = np.array(rec.values()) #rec.values()
-
+ 
             if 'Hydropower Energy [MWh]' in rec.name:
                 sc_index = model.scenarios.multiindex
                 vals_hy = pd.DataFrame(np.array(rec.values()), index=sc_index)
@@ -395,41 +396,42 @@ def run_simulation(filename):
                 
                 frq = convert_freq_to_days(model.timestepper.freq)  
                 number_simulated_years = (model.timestepper.end - model.timestepper.start).days / 365.25   # total days of simulation div 365 to get total years
-                factor_to_annual = frq / number_simulated_years  # 
+                factor_to_annual = frq / number_simulated_years  #
                 values_hydropower = vals_hy.multiply(factor_to_annual) # Convert to MWh/year     
                 
                 # methos 2 alternative (backup)
                 # number_of_time_steps = (model.timestepper.end - model.timestepper.start).days/frq
                 # values_hydropower = vals_hy.divide(number_of_time_steps).multiply(365) # Convert to MWh/year
-
+ 
             if 'Hydropower Firm Power [MW]' in rec.name:
                 sc_index = model.scenarios.multiindex
                 vals_pw = pd.DataFrame(np.array(rec.values()), index=sc_index)
-
+ 
                 vals_pw.columns = [''] * len(vals_pw.columns)
                 valures_firm_power = vals_pw
-
+ 
             if 'Volumetric Supply' in rec.name:
                 sc_index = model.scenarios.multiindex
-
+ 
                 vals_volumetric = pd.DataFrame(np.array(rec.values()), index=sc_index)
-
+ 
                 number_simulated_years = (model.timestepper.end - model.timestepper.start).days / 365.25   # total days of simulation div 365 to get total years
-
+ 
                 vals_volumetric.columns = [''] * len(vals_volumetric.columns)
                 values_volumetric = vals_volumetric.divide(number_simulated_years) # Convert to Mm3/year
-
+ 
         except NotImplementedError:
             pass
         
         else:
-            if ('Reliability' in rec.name or 'Resilience' in rec.name 
-                or 'Annual Deficit' in rec.name or 'annual crop yield' in rec.name or 'supply reliability' in rec.name):
+            if ('Reliability' in rec.name or 'Resilience' in rec.name
+                or 'Annual Deficit' in rec.name or 'annual crop yield' in rec.name or 'supply reliability' in rec.name
+                or 'cost recorder' in rec.name):
                 try:
                     store_metrics[f"{rec.name}"] = values
                 except Exception as excp:
                     logger.error(f"Error in saving data  in store_metrics:\n rec.name: {rec.name}.")
-
+ 
             if 'Hydropower Energy [MWh]' in rec.name:
                 try:
                     store_metrics[f"{rec.name}"] = values_hydropower
@@ -441,13 +443,13 @@ def run_simulation(filename):
                     store_metrics[f"{rec.name}"] = valures_firm_power
                 except Exception as excp:
                     logger.error(f"Error in saving data  in store_metrics:\n rec.name: {rec.name}.")
-
+ 
             if 'Volumetric Supply' in rec.name:
                 try:
                     store_metrics[f"{rec.name}"] = values_volumetric
                 except Exception as excp:
                     logger.error(f"Error in saving data  in store_metrics:\n rec.name: {rec.name}.")
-
+ 
     store_metrics.close()
 
 
@@ -1007,11 +1009,6 @@ def search(
         divisions_outer: Outer divisions for NSGA-III
         divisions_inner: Inner divisions for NSGA-III
     """
-    import platypus
-    from run_moea.BsonPlatypusWrapper import (
-        PyretoJSONPlatypusWrapper,
-        SaveNondominatedSolutionsArchive,
-    )
 
     # Generate seed if not provided
     if seed is None:
@@ -1172,6 +1169,7 @@ def _create_wrapper(
         PyretoJSONPlatypusWrapper,
         SaveNondominatedSolutionsArchive,
     )
+    import run_pywr.custom_recorders  # Ensure custom recorders are registered in worker processes
     
     if wrapper_type == 'json':
         return PyretoJSONPlatypusWrapper(
