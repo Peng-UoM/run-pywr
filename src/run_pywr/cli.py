@@ -111,8 +111,8 @@ def run(filename):
     # Save metrics to Excel
     metrics_path = os.path.join(output_directory, f"{base}_metrics.xlsx")
     with pd.ExcelWriter(metrics_path, engine='openpyxl') as writer:
-        recorders_.to_excel(writer, 'values')
-        agg_recorders.to_excel(writer, 'agg_values')
+        recorders_.to_excel(writer, sheet_name='values')
+        agg_recorders.to_excel(writer, sheet_name='agg_values')
     
     print(f"Metrics saved to Excel file: {metrics_path}")
 
@@ -361,9 +361,9 @@ def run_simulation(filename):
  
             else:
                 if 'Hydropower Energy [MWh]' in rec.name:
-                    store_recorders[rec.name] = df.resample('M').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
+                    store_recorders[rec.name] = df.resample('ME').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
                 else:
-                    store_recorders[rec.name] = df.resample('M').mean().loc[:str(model.timestepper.end.year),:]
+                    store_recorders[rec.name] = df.resample('ME').mean().loc[:str(model.timestepper.end.year),:]
  
         try:
             if 'Aggregated' in rec.name:
@@ -568,9 +568,9 @@ def run_dams_value(filename):
 
                 else:
                     if 'Hydropower Energy [MWh]' in rec.name:
-                        store_recorders[rec.name] = df.resample('M').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
+                        store_recorders[rec.name] = df.resample('ME').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
                     else:
-                        store_recorders[rec.name] = df.resample('M').mean().loc[:str(model.timestepper.end.year),:]
+                        store_recorders[rec.name] = df.resample('ME').mean().loc[:str(model.timestepper.end.year),:]
 
             try:
                 if 'Aggregated' in rec.name:
@@ -778,9 +778,9 @@ def run_scenarios(filename, start, end, resample):
 
                 else:
                     if 'Hydropower Energy [MWh]' in rec.name:
-                        store_recorders[rec.name] = df.resample('M').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
+                        store_recorders[rec.name] = df.resample('ME').mean().multiply(30.42).loc[:str(model.timestepper.end.year),:] # Convert to MWh/month
                     else:
-                        store_recorders[rec.name] = df.resample('M').mean().loc[:str(model.timestepper.end.year),:]
+                        store_recorders[rec.name] = df.resample('ME').mean().loc[:str(model.timestepper.end.year),:]
 
             try:
                 if 'Aggregated' in rec.name:
@@ -880,7 +880,7 @@ def run_scenarios(filename, start, end, resample):
     #         df = rec.to_dataframe()
 
     #         if resample == True:
-    #             df = df.resample('M').mean()
+    #             df = df.resample('ME').mean()
     #             store[rec.name] = df
 
     #         else:

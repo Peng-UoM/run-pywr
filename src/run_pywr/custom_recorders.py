@@ -61,7 +61,7 @@ class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
         index = self.model.timestepper.datetime_index
         sc_index = self.model.scenarios.multiindex
 
-        count_nonzeros = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('Y').sum().to_numpy()
+        count_nonzeros = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').sum().to_numpy()
 
         return self._temporal_aggregator.aggregate_2d(count_nonzeros, axis=0, ignore_nan=self.ignore_nan)
 
@@ -70,7 +70,7 @@ class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
         index = self.model.timestepper.datetime_index
         sc_index = self.model.scenarios.multiindex
 
-        annual_val = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('Y').sum().to_numpy()
+        annual_val = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').sum().to_numpy()
 
         zeros_ones = np.where(annual_val > 0, 1, 0)
 
@@ -441,7 +441,7 @@ class ReservoirMonthlyReliabilityRecorder(NumpyArrayAbstractStorageRecorder):
         index = self.model.timestepper.datetime_index
         sc_index = self.model.scenarios.multiindex
 
-        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('M').max()
+        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('ME').max()
 
         return 1 - ((DataFrame.sum().round(0) / DataFrame.shape[0]))
     
@@ -492,7 +492,7 @@ class ReservoirAnnualReliabilityRecorder(NumpyArrayAbstractStorageRecorder):
         index = self.model.timestepper.datetime_index
         sc_index = self.model.scenarios.multiindex
 
-        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('Y').max()
+        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').max()
 
         return 1 - ((DataFrame.sum().round(0) / DataFrame.shape[0]))
     
@@ -550,7 +550,7 @@ class SupplyReliabilityRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('M').max().loc[:str(last_year), :]
+        DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('ME').max().loc[:str(last_year), :]
 
         return 1 - ((DataFrame.sum().round(0) / DataFrame.shape[0]))
     
@@ -603,8 +603,8 @@ class AnnualDeficitRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
 
         rlts = 1 - supply.divide(demand)
 
@@ -864,10 +864,10 @@ class AverageAnnualCropYieldScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
-        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
+        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
 
         curtailment_ratio = supply.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -889,10 +889,10 @@ class AverageAnnualCropYieldScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
-        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
+        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
 
         curtailment_ratio = supply.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -969,10 +969,10 @@ class TotalAnnualCropYieldScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        #supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        areas = pd.DataFrame(np.array(self._area), index=index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
-        yields = pd.DataFrame(np.array(self._yield), index=index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
+        #supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        areas = pd.DataFrame(np.array(self._area), index=index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
+        yields = pd.DataFrame(np.array(self._yield), index=index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
 
         curtailment_ratio = demand.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -1039,18 +1039,18 @@ class IrrigationSupplyReliabilityScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('M').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('M').sum().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('ME').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('ME').sum().loc[:str(last_year), :]
 
         # Here we calculate the months where the demand is higher than 0.8 Kc
         mths_kc = np.where(self._kc < np.max(self._kc)*0.8, 0, 1)
-        mths_kc = pd.DataFrame(mths_kc, index=index, columns=sc_index).resample('M').mean().loc[:str(last_year), :]
+        mths_kc = pd.DataFrame(mths_kc, index=index, columns=sc_index).resample('ME').mean().loc[:str(last_year), :]
 
         moths_failures = np.where(supply < demand*self.threshold, 1, 0)
         moths_failures = pd.DataFrame(moths_failures, index=demand.index, columns=demand.columns)
 
         # Here we calculate the years where there is a failure only considering the months with high demand "mths_kc"
-        failures = moths_failures.multiply(mths_kc).dropna().resample('Y').max()
+        failures = moths_failures.multiply(mths_kc).dropna().resample('YE').max()
 
 
         return 1 - (failures.sum().round(0) / failures.shape[0])
@@ -1099,8 +1099,8 @@ class CropCurtailmentRatioScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
 
         curtailment_ratio = supply.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -1166,8 +1166,8 @@ class AnnualIrrigationSupplyReliabilityScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
 
 
         # Here we calculate the years where there is a failure only considering the threshold
@@ -1243,10 +1243,10 @@ class AverageAnnualIrrigationRevenueScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
-        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
+        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
 
         curtailment_ratio = supply.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -1269,10 +1269,10 @@ class AverageAnnualIrrigationRevenueScenarioRecorder(NodeRecorder):
 
         last_year = index[-1].year
 
-        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('Y').sum().loc[:str(last_year), :]
-        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
-        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('Y').mean().loc[:str(last_year), :]
+        supply = pd.DataFrame(np.array(self._supply), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        demand = pd.DataFrame(np.array(self._demand), index=resample_index, columns=sc_index).resample('YE').sum().loc[:str(last_year), :]
+        areas = pd.DataFrame(np.array(self._area), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
+        yields = pd.DataFrame(np.array(self._yield), index=resample_index, columns=sc_index).resample('YE').mean().loc[:str(last_year), :]
 
         curtailment_ratio = supply.divide(demand)
         curtailment_ratio.replace([np.inf, -np.inf], 0, inplace=True) # Replace inf with 0
@@ -1336,7 +1336,7 @@ class AnnualSeasonalAccumulatedFlowRecorder(NodeRecorder):
         AnnualFlow = AnnualFlow[AnnualFlow.index.month.isin(self.months)]
 
         last_year = index[-1].year
-        AnnualFlow = AnnualFlow.loc[:str(last_year), :].resample('Y').sum()
+        AnnualFlow = AnnualFlow.loc[:str(last_year), :].resample('YE').sum()
         
         return AnnualFlow
 
@@ -1351,7 +1351,7 @@ class AnnualSeasonalAccumulatedFlowRecorder(NodeRecorder):
         AnnualFlow = AnnualFlow[AnnualFlow.index.month.isin(self.months)]
 
         last_year = index[-1].year
-        AnnualFlow = AnnualFlow.loc[:str(last_year), :].resample('Y').sum()
+        AnnualFlow = AnnualFlow.loc[:str(last_year), :].resample('YE').sum()
 
         return self._temporal_aggregator.aggregate_2d(AnnualFlow.values, axis=0, ignore_nan=self.ignore_nan)
 
@@ -1404,7 +1404,7 @@ class AnnualSeasonalVolumeRecorder(NodeRecorder):
         AnnualVolume = AnnualVolume[AnnualVolume.index.month.isin(self.months)]
 
         last_year = index[-1].year
-        AnnualVolume = AnnualVolume.loc[:str(last_year), :].resample('Y').mean()
+        AnnualVolume = AnnualVolume.loc[:str(last_year), :].resample('YE').mean()
         
         return AnnualVolume
 
@@ -1419,7 +1419,7 @@ class AnnualSeasonalVolumeRecorder(NodeRecorder):
         AnnualVolume = AnnualVolume[AnnualVolume.index.month.isin(self.months)]
 
         last_year = index[-1].year
-        AnnualVolume = AnnualVolume.loc[:str(last_year), :].resample('Y').mean()
+        AnnualVolume = AnnualVolume.loc[:str(last_year), :].resample('YE').mean()
         
         #AnnualVolume = AnnualVolume.mean(axis=0)
         
@@ -1589,7 +1589,7 @@ class AnnualHydropowerRecorder(NumpyArrayNodeRecorder):
         if self._monthly_seasonality is not None:
             annual_hydropower = annual_hydropower[annual_hydropower.index.month.isin(self._monthly_seasonality)]
 
-        annual_hydropower = annual_hydropower.resample('Y').sum() # To get annual hydropower generation in MWh/year
+        annual_hydropower = annual_hydropower.resample('YE').sum() # To get annual hydropower generation in MWh/year
 
         if self.factor is not None:
             annual_hydropower = annual_hydropower.multiply(self.factor, axis=0)
@@ -1616,7 +1616,7 @@ class AnnualHydropowerRecorder(NumpyArrayNodeRecorder):
         if self._monthly_seasonality is not None:
             annual_hydropower = annual_hydropower[annual_hydropower.index.month.isin(self._monthly_seasonality)]
 
-        annual_hydropower = annual_hydropower.resample('Y').sum() # To get annual hydropower generation in MWh/year
+        annual_hydropower = annual_hydropower.resample('YE').sum() # To get annual hydropower generation in MWh/year
 
         if self.factor is not None:
             annual_hydropower = annual_hydropower.multiply(self.factor, axis=0)
@@ -1696,7 +1696,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
         outflow = outflow[outflow.index.month.isin(self.monthly_seasonality)]
 
         last_year = index[-1].year
-        outflow = outflow.loc[:str(last_year), :].resample('Y').sum()
+        outflow = outflow.loc[:str(last_year), :].resample('YE').sum()
 
         rule = pd.DataFrame(np.array(self._data_rule), index=index, columns=sc_index)
         rule = rule.resample('D').ffill()
@@ -1704,7 +1704,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
         rule = rule[rule.index.month.isin(self.monthly_seasonality)]
 
         last_year = index[-1].year
-        rule = rule.loc[:str(last_year), :].resample('Y').sum()
+        rule = rule.loc[:str(last_year), :].resample('YE').sum()
 
         return (rule - 4200) - outflow
 
@@ -1720,7 +1720,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
         outflow = outflow[outflow.index.month.isin(self.monthly_seasonality)]
 
         last_year = index[-1].year
-        outflow = outflow.loc[:str(last_year), :].resample('Y').sum()
+        outflow = outflow.loc[:str(last_year), :].resample('YE').sum()
 
         rule = pd.DataFrame(np.array(self._data_rule), index=index, columns=sc_index)
         rule = rule.resample('D').ffill()
@@ -1728,7 +1728,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
         rule = rule[rule.index.month.isin(self.monthly_seasonality)]
 
         last_year = index[-1].year
-        rule = rule.loc[:str(last_year), :].resample('Y').sum()
+        rule = rule.loc[:str(last_year), :].resample('YE').sum()
 
         constraint = (rule - 4200) - outflow
 
@@ -6877,7 +6877,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
             df = df[df.index.month.isin(self.monthly_seasonality)]
 
         last_year = index[-1].year
-        df = df.loc[:str(last_year), :].resample("Y").sum()
+        df = df.loc[:str(last_year), :].resample("YE").sum()
 
         return df
 
@@ -7128,13 +7128,13 @@ class StorageTargetRecorder(NodeRecorder):
             )
 
         if self.annual_agg_func == "mean":
-            out = out.resample("Y").mean()
+            out = out.resample("YE").mean()
         elif self.annual_agg_func == "sum":
-            out = out.resample("Y").sum()
+            out = out.resample("YE").sum()
         elif self.annual_agg_func == "max":
-            out = out.resample("Y").max()
+            out = out.resample("YE").max()
         elif self.annual_agg_func == "min":
-            out = out.resample("Y").min()
+            out = out.resample("YE").min()
         else:
             raise ValueError(
                 f"Unknown annual_agg_func '{self.annual_agg_func}'. "
