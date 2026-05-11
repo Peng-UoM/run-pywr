@@ -8,6 +8,13 @@ from pywr.recorders import (NumpyArrayNodeRecorder, NodeRecorder, Aggregator, Nu
                             Recorder, hydropower_calculation, NumpyArrayParameterRecorder, BaseConstantParameterRecorder)
 from pywr.recorders._recorders import NumpyArrayNodeRecorder
 
+
+def _as_datetime_index(index):
+    if isinstance(index, pd.PeriodIndex):
+        return index.to_timestamp()
+    return index
+
+
 class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
 
     """
@@ -50,7 +57,7 @@ class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
 
     def to_dataframe(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         return pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -58,7 +65,7 @@ class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         count_nonzeros = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').sum().to_numpy()
@@ -67,7 +74,7 @@ class NumpyArrayAnnualNodeDeficitFrequencyRecorder(NodeRecorder):
 
     def aggregated_value(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         annual_val = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').sum().to_numpy()
@@ -116,7 +123,7 @@ class AbstractComparisonNodeRecorder(NumpyArrayNodeRecorder):
         start, end = index_col[0], index_col[-1]
         timestepper = pd.period_range(start=start, end=end, freq=freq)
         self._aligned_observed = align_and_resample_dataframe(self.observed, timestepper, 'sum')
-        #self._aligned_observed = align_and_resample_dataframe(self.observed, self.model.timestepper.datetime_index)
+        #self._aligned_observed = align_and_resample_dataframe(self.observed, _as_datetime_index(self.model.timestepper.datetime_index))
 
     @classmethod
     def load(cls, model, data):
@@ -152,16 +159,16 @@ class RootMeanSquaredErrorNodeRecorder(AbstractComparisonNodeRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model.')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
-            #mod = pandas.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).sum()
+            #mod = pandas.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).sum()
 
         new = pd.merge(obs, mod, how='inner', left_index=True, right_index=True)
         obs = new.iloc[:, 0].to_frame().T.reset_index(drop=True).T
@@ -188,16 +195,16 @@ class NashSutcliffeEfficiencyNodeRecorder(AbstractComparisonNodeRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model.')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
-            #mod = pandas.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).sum()
+            #mod = pandas.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).sum()
 
         new = pd.merge(obs,mod, how='inner', left_index=True, right_index=True)
         obs = new.iloc[:, 0].to_frame().T.reset_index(drop=True).T
@@ -225,16 +232,16 @@ class PercentBiasNodeRecorder(AbstractComparisonNodeRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model.')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
-            #mod = pandas.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).sum()
+            #mod = pandas.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).sum()
 
         new = pd.merge(obs,mod, how='inner', left_index=True, right_index=True)
         obs = new.iloc[:, 0].to_frame().T.reset_index(drop=True).T
@@ -265,7 +272,7 @@ class AbstractComparisonStorageRecorder(NumpyArrayStorageRecorder):
         # Align the observed data to the model
 
         from pywr.parameters import align_and_resample_dataframe
-        #        self._aligned_observed = align_and_resample_dataframe(self.observed, self.model.timestepper.datetime_index)
+        #        self._aligned_observed = align_and_resample_dataframe(self.observed, _as_datetime_index(self.model.timestepper.datetime_index))
 
         freq = self.obs_freq
         index_col = self.observed.index.tolist()
@@ -309,12 +316,12 @@ class NashSutcliffeEfficiencyStorageRecorder(AbstractComparisonStorageRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
@@ -344,16 +351,16 @@ class RootMeanSquaredErrorStorageRecorder(AbstractComparisonStorageRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model.')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
-            #mod = pandas.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).sum()
+            #mod = pandas.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).sum()
 
         new = pd.merge(obs, mod, how='inner', left_index=True, right_index=True)
         obs = new.iloc[:, 0].to_frame().T.reset_index(drop=True).T
@@ -379,16 +386,16 @@ class PercentBiasStorageRecorder(AbstractComparisonStorageRecorder):
             mod = self.data
         else:
             if self.model.timestepper.freq == freq:
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).mean()
             else:
                 #print(f'OJO! The recorder associated to this node "{self.node.name}" '
                       #f'has freq observed data =! freq model - '
                       #f'Check if freq observed data >= freq model.')
-                mod = pd.DataFrame(self.data, index=self.model.timestepper.datetime_index.astype('datetime64[ns]')).resample(freq).mean()
+                mod = pd.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index).astype('datetime64[ns]')).resample(freq).mean()
                 mod.index = mod.index.strftime('%Y-%m')
                 obs.index = obs.index.astype('datetime64[ns]').strftime('%Y-%m')
 
-            #mod = pandas.DataFrame(self.data, index=self.model.timestepper.datetime_index).resample(freq).sum()
+            #mod = pandas.DataFrame(self.data, index=_as_datetime_index(self.model.timestepper.datetime_index)).resample(freq).sum()
 
         new = pd.merge(obs,mod, how='inner', left_index=True, right_index=True)
         obs = new.iloc[:, 0].to_frame().T.reset_index(drop=True).T
@@ -438,7 +445,7 @@ class ReservoirMonthlyReliabilityRecorder(NumpyArrayAbstractStorageRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('ME').max()
@@ -489,7 +496,7 @@ class ReservoirAnnualReliabilityRecorder(NumpyArrayAbstractStorageRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         DataFrame = pd.DataFrame(np.array(self._data), index=index, columns=sc_index).resample('YE').max()
@@ -545,7 +552,7 @@ class SupplyReliabilityRecorder(NodeRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -598,7 +605,7 @@ class AnnualDeficitRecorder(NodeRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -666,7 +673,7 @@ class ReservoirResilienceRecorder(NumpyArrayAbstractStorageRecorder):
 
     def values(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         tem_dams = pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -790,7 +797,7 @@ class RelativeCropYieldRecorder(Recorder):
         as the first level and scenario combination names as the second level. This
         allows for easy combination with multiple recorder's DataFrames
         """
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         return pd.DataFrame(data=np.array(self.data), index=index, columns=sc_index)
@@ -858,7 +865,7 @@ class AverageAnnualCropYieldScenarioRecorder(NodeRecorder):
     
         max_flow_param = self.node.max_flow
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         resample_index = index.to_timestamp() if isinstance(index, pd.PeriodIndex) else index
         sc_index = self.model.scenarios.multiindex
 
@@ -883,7 +890,7 @@ class AverageAnnualCropYieldScenarioRecorder(NodeRecorder):
         
         max_flow_param = self.node.max_flow
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         resample_index = index.to_timestamp() if isinstance(index, pd.PeriodIndex) else index
         sc_index = self.model.scenarios.multiindex
 
@@ -964,7 +971,7 @@ class TotalAnnualCropYieldScenarioRecorder(NodeRecorder):
         
         max_flow_param = self.node.max_flow
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -1034,7 +1041,7 @@ class IrrigationSupplyReliabilityScenarioRecorder(NodeRecorder):
 
     def values(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -1094,7 +1101,7 @@ class CropCurtailmentRatioScenarioRecorder(NodeRecorder):
 
     def to_dataframe(self):
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -1161,7 +1168,7 @@ class AnnualIrrigationSupplyReliabilityScenarioRecorder(NodeRecorder):
 
     def values(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         last_year = index[-1].year
@@ -1237,7 +1244,7 @@ class AverageAnnualIrrigationRevenueScenarioRecorder(NodeRecorder):
 
         max_flow_param = self.node.max_flow
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         resample_index = index.to_timestamp() if isinstance(index, pd.PeriodIndex) else index
         sc_index = self.model.scenarios.multiindex
 
@@ -1263,7 +1270,7 @@ class AverageAnnualIrrigationRevenueScenarioRecorder(NodeRecorder):
 
         max_flow_param = self.node.max_flow
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         resample_index = index.to_timestamp() if isinstance(index, pd.PeriodIndex) else index
         sc_index = self.model.scenarios.multiindex
 
@@ -1327,7 +1334,7 @@ class AnnualSeasonalAccumulatedFlowRecorder(NodeRecorder):
 
     def to_dataframe(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         AnnualFlow = pd.DataFrame(np.array(self.cummulatedFlow), index=index, columns=sc_index)
@@ -1343,7 +1350,7 @@ class AnnualSeasonalAccumulatedFlowRecorder(NodeRecorder):
 
     def values(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         AnnualFlow = pd.DataFrame(np.array(self.cummulatedFlow), index=index, columns=sc_index)
@@ -1396,7 +1403,7 @@ class AnnualSeasonalVolumeRecorder(NodeRecorder):
 
     def to_dataframe(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         AnnualVolume = pd.DataFrame(np.array(self.cummulatedFlow), index=index, columns=sc_index)
@@ -1411,7 +1418,7 @@ class AnnualSeasonalVolumeRecorder(NodeRecorder):
 
     def values(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         AnnualVolume = pd.DataFrame(np.array(self.cummulatedFlow), index=index, columns=sc_index)
@@ -1579,7 +1586,7 @@ class AnnualHydropowerRecorder(NumpyArrayNodeRecorder):
         """Compute a value for each scenario using `temporal_agg_func`.
         """
 
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         annual_hydropower = pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -1606,7 +1613,7 @@ class AnnualHydropowerRecorder(NumpyArrayNodeRecorder):
         as the first level and scenario combination names as the second level. This
         allows for easy combination with multiple recorder's DataFrames
         """
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         annual_hydropower = pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -1687,7 +1694,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
 
     def to_dataframe(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         outflow = pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -1711,7 +1718,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
 
     def values(self):
         
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
         
         outflow = pd.DataFrame(np.array(self._data), index=index, columns=sc_index)
@@ -2336,7 +2343,7 @@ Rabi_water_allocation_origional.register()
 #     def setup(self):
 #         super(RootMeanSquaredErrorNodeRecorder_, self).setup()
 #         # Align the observed data to the model
-#         self._aligned_observed = align_and_resample_dataframe(self.observed, self.model.timestepper.datetime_index)
+#         self._aligned_observed = align_and_resample_dataframe(self.observed, _as_datetime_index(self.model.timestepper.datetime_index))
 
 #     def values(self):
 #         mod = self.data
@@ -2403,7 +2410,7 @@ Rabi_water_allocation_origional.register()
 #         as the first level and scenario combination names as the second level. This
 #         allows for easy combination with multiple recorder's DataFrames
 #         """
-#         index = self.model.timestepper.datetime_index
+#         index = _as_datetime_index(self.model.timestepper.datetime_index)
 #         sc_index = self.model.scenarios.multiindex
 
 #         return pd.DataFrame(data=np.array(self.nsc), index=index, columns=sc_index)
@@ -2470,7 +2477,7 @@ Rabi_water_allocation_origional.register()
 #         as the first level and scenario combination names as the second level. This
 #         allows for easy combination with multiple recorder's DataFrames
 #         """
-#         index = self.model.timestepper.datetime_index
+#         index = _as_datetime_index(self.model.timestepper.datetime_index)
 #         sc_index = self.model.scenarios.multiindex
 
 #         return pd.DataFrame(data=np.array(self.nsc), index=index, columns=sc_index)
@@ -4869,7 +4876,7 @@ class HydropowerRecorderIndus(NumpyArrayNodeRecorder):
         as the first level and scenario combination names as the second level. This
         allows for easy combination with multiple recorder's DataFrames
         """
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         return pd.DataFrame(data=np.array(self._data), index=index, columns=sc_index)
@@ -5148,7 +5155,7 @@ class MetricRecorderMixin:
         self._obs_df_prepared = obs_df
 
         # Prepare model native datetime index once.
-        native_index = self.model.timestepper.datetime_index
+        native_index = _as_datetime_index(self.model.timestepper.datetime_index)
         if isinstance(native_index, pd.PeriodIndex):
             native_index = native_index.to_timestamp()
         else:
@@ -6127,7 +6134,7 @@ class AnnualIrrigationRevenueRecorder(NodeRecorder):
         """
         super().setup()
 
-        dt_index = self.model.timestepper.datetime_index
+        dt_index = _as_datetime_index(self.model.timestepper.datetime_index)
         if isinstance(dt_index, pd.PeriodIndex):
             dt_index = dt_index.to_timestamp()
 
@@ -6564,7 +6571,7 @@ class AnnualHydroPowerRecorder(NodeRecorder):
         ts_start = getattr(self.model.timestepper, "start", None)
         ts_end = getattr(self.model.timestepper, "end", None)
 
-        dt_index = self.model.timestepper.datetime_index
+        dt_index = _as_datetime_index(self.model.timestepper.datetime_index)
         if isinstance(dt_index, pd.PeriodIndex):
             dt_index = dt_index.to_timestamp()
 
@@ -6867,7 +6874,7 @@ class SeasonalTransferConstraintRecorder(NodeRecorder):
         return 0
 
     def _annual_sum(self, data_array):
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         df = pd.DataFrame(np.array(data_array), index=index, columns=sc_index)
@@ -7092,7 +7099,7 @@ class StorageTargetRecorder(NodeRecorder):
         return 0
 
     def _build_series(self):
-        index = self.model.timestepper.datetime_index
+        index = _as_datetime_index(self.model.timestepper.datetime_index)
         sc_index = self.model.scenarios.multiindex
 
         actual = pd.DataFrame(np.array(self._actual), index=index, columns=sc_index)
